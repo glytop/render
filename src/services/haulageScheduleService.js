@@ -3,9 +3,24 @@ function clean(value) {
   return String(value).trim();
 }
 
+function formatDateDdMmYyyy(value) {
+  const raw = clean(value);
+  if (!raw) return '';
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) return raw;
+
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+
+  const dd = String(date.getUTCDate()).padStart(2, '0');
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = String(date.getUTCFullYear());
+  return `${dd}/${mm}/${yyyy}`;
+}
+
 function normalizeRow(row) {
   if (!row || typeof row !== 'object') return null;
-  const deliveryDate = clean(
+  const deliveryDate = formatDateDdMmYyyy(
     row.deliveryDate ??
     row.delivery_date ??
     row.Delivery_Date__c ??
