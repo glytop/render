@@ -3,7 +3,7 @@ const objectApiName = 'Contract__c';
 const fieldPaths = [
   'Name',
   'Quantity__c',
-  //'Contract_Date__c',
+  'Contract_Date__c',
   'Price__c',
   'Quality__c',
   'Position__c',
@@ -11,7 +11,7 @@ const fieldPaths = [
   'Payment_terms__c',
   'Account__c.Name',
   'Account__c.AccountNumber',
-  //'Account__c.Broker__c',
+  'Account__c.Broker__c',
   'Commodity__c.Name',
   'Account__c.BillingStreet',
   'Account__c.BillingPostalCode'
@@ -25,7 +25,7 @@ function map(data) {
   return {
     'Contract__c.Name': contractRoot.Name ?? data.Name ?? '',
     'Contract__c.Quantity__c': contractRoot.Quantity__c ?? data.Quantity__c ?? '',
-    //'Contract__c.Contract_Date__c': contractRoot.Contract_Date__c ?? data.Contract_Date__c ?? '',
+    'Contract__c.Contract_Date__c': contractRoot.Contract_Date__c ?? data.Contract_Date__c ?? '',
     'Contract__c.Price__c': contractRoot.Price__c ?? data.Price__c ?? '',
     'Contract__c.Quality__c': contractRoot.Quality__c ?? data.Quality__c ?? '',
     'Contract__c.Position__c': contractRoot.Position__c ?? data.Position__c ?? '',
@@ -33,7 +33,7 @@ function map(data) {
     'Contract__c.Payment_terms__c': contractRoot.Payment_terms__c ?? data.Payment_terms__c ?? '',
     'Account.Name': account.Name ?? '',
     'Account.AccountNumber': account.AccountNumber ?? '',
-    //'Account.Broker__c': account.Broker__c ?? '',
+    'Account.Broker__c': account.Broker__c ?? '',
     'Commodity__c.Name': commodity.Name ?? '',
     'Account.BillingStreet': account.BillingStreet ?? '',
     'Account.BillingPostalCode': account.BillingPostalCode ?? '',

@@ -9,6 +9,9 @@ const { resolveCompanyInfoContext } = require('./companyInfoService');
 const { resolveTermsInfoContext } = require('./termsInfoService');
 const { resolveAutoSourceData } = require('./autoSourceDataService');
 const { resolveHaulageScheduleContext } = require('./haulageScheduleService');
+const { resolveMovementSheetContext } = require('./movementSheetService');
+const { resolveFooterContext } = require('./footerService');
+const { resolveSampleResultContext } = require('./sampleResultService');
 const { getMappingByObjectApiName } = require('../mappings');
 
 function deepMerge(base, override) {
@@ -33,6 +36,20 @@ function deepMerge(base, override) {
   return merged;
 }
 
+function sanitizeTemplateZip(zip) {
+  const files = Object.keys(zip.files || {});
+  files
+    .filter((name) => /^word\/.*\.xml$/i.test(name))
+    .forEach((name) => {
+      const file = zip.file(name);
+      if (!file) return;
+      const xml = file.asText();
+      if (!xml || xml.indexOf('<w:proofErr') === -1) return;
+      const sanitized = xml.replace(/<w:proofErr\b[^>]*\/>/g, '');
+      zip.file(name, sanitized);
+    });
+}
+
 async function generateDocx(payload) {
   const { env, docVersionId } = payload || {};
   if (!env) {
@@ -44,6 +61,7 @@ async function generateDocx(payload) {
   const templateBuffer = await downloadContentVersion(docVersionId, env);
 
   const zip = new PizZip(templateBuffer);
+  sanitizeTemplateZip(zip);
   const mappingByApiName = getMappingByObjectApiName(payload?.objectApiName);
   const payloadWithResolver = {
     ...payload,
@@ -76,6 +94,9 @@ async function generateDocx(payload) {
   const companyInfoContext = await resolveCompanyInfoContext(payload, env);
   const termsInfoContext = await resolveTermsInfoContext(payload, env);
   const haulageScheduleContext = resolveHaulageScheduleContext(payloadWithAutoSource);
+  const movementSheetContext = await resolveMovementSheetContext(payloadWithAutoSource, env);
+  const sampleResultContext = await resolveSampleResultContext(payloadWithAutoSource, env);
+  const footerContext = await resolveFooterContext(payload, env);
   const imageModule = createImageModule(payloadWithAutoSource, imageById);
   const doc = new Docxtemplater(zip, {
     paragraphLoop: true,
@@ -89,6 +110,9 @@ async function generateDocx(payload) {
     ...companyInfoContext,
     ...termsInfoContext,
     ...haulageScheduleContext,
+    ...movementSheetContext,
+    ...sampleResultContext,
+    ...footerContext,
   });
 
   doc.render(context);

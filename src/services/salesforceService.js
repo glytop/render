@@ -21,6 +21,11 @@ const SF_CONFIG = {
     clientId: process.env.SF_SANDBOXQA2_CLIENT_ID,
     clientSecret: process.env.SF_SANDBOXQA2_CLIENT_SECRET,
   },
+  sandboxPartial: {
+    authUrl: 'https://business-energy-3294--partial.sandbox.my.salesforce.com',
+    clientId: process.env.SF_SANDBOX_PARTIAL_CLIENT_ID,
+    clientSecret: process.env.SF_SANDBOX_PARTIAL_CLIENT_SECRET,
+  },
 };
 
 const tokenCache = {};
@@ -95,6 +100,20 @@ async function querySalesforce(soql, instanceType) {
   return response.data;
 }
 
+async function getSalesforceServerDate(instanceType) {
+  const { accessToken, instanceUrl } = await getAccessToken(instanceType);
+  const response = await axios.get(
+    `${instanceUrl}/services/data/v60.0/limits`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+  const headerDate = response?.headers?.date;
+  return headerDate ? new Date(headerDate) : new Date();
+}
+
 async function getSObjectRecord(objectApiName, recordId, instanceType) {
   const { accessToken, instanceUrl } = await getAccessToken(instanceType);
   const response = await axios.get(
@@ -147,4 +166,5 @@ module.exports = {
   normalizeBinary,
   querySalesforce,
   getSObjectRecord,
+  getSalesforceServerDate,
 };

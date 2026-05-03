@@ -2,12 +2,18 @@ const opportunity = require('./opportunity');
 const account = require('./account');
 const contract = require('./contract');
 const haulageInstruction = require('./haulageInstruction');
+const movementSheet = require('./movementSheet');
+const sampleInstruction = require('./sampleInstruction');
+const sampleResult = require('./sampleResult');
 
 const mappings = {
   Opportunity: opportunity,
   Account: account,
   Contract__c: contract,
   Haulage_Instruction__c: haulageInstruction,
+  Movement_Sheet__c: movementSheet,
+  Sample_Instruction__c: sampleInstruction,
+  Sample_Result__c: sampleResult,
 };
 
 function getMapping(objectType) {

@@ -7,6 +7,7 @@ function formatDateDdMmYyyy(value) {
   const raw = clean(value);
   if (!raw) return '';
 
+  // Already formatted as dd/mm/yyyy
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) return raw;
 
   const date = new Date(raw);
