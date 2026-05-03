@@ -31,12 +31,12 @@ function map(data) {
     'Contract__c.Position__c': contractRoot.Position__c ?? data.Position__c ?? '',
     'Contract__c.Delivery__c': contractRoot.Delivery__c ?? data.Delivery__c ?? '',
     'Contract__c.Payment_terms__c': contractRoot.Payment_terms__c ?? data.Payment_terms__c ?? '',
-    'Account.Name': account.Name ?? '',
-    'Account.AccountNumber': account.AccountNumber ?? '',
-    'Account.Broker__c': account.Broker__c ?? '',
+    'Account__c.Name': account.Name ?? '',
+    'Account__c.AccountNumber': account.AccountNumber ?? '',
+    'Account__c.Broker__c': account.Broker__c ?? '',
     'Commodity__c.Name': commodity.Name ?? '',
-    'Account.BillingStreet': account.BillingStreet ?? '',
-    'Account.BillingPostalCode': account.BillingPostalCode ?? '',
+    'Account__c.BillingStreet': account.BillingStreet ?? '',
+    'Account__c.BillingPostalCode': account.BillingPostalCode ?? '',
   };
 }
 
