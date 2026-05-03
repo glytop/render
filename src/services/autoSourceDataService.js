@@ -64,33 +64,23 @@ function setByPath(obj, path, value) {
   }
 }
 
-async function resolveAutoSourceData(payload, env) {
-  const resolver = payload?.dataResolver || payload?.sourceResolver || {};
-  const objectApiName = cleanText(
-    resolver.objectApiName || resolver.objectType || payload?.sourceObjectApiName
-  );
-  const recordId = cleanText(
-    resolver.recordId || resolver.id || payload?.sourceRecordId
-  );
-  const fieldPaths = normalizeFieldPaths(
-    resolver.fieldPaths || payload?.sourceFieldPaths
-  );
-  const targetRoot = cleanText(resolver.targetRoot || objectApiName);
+function resolveRecordIdList(resolver, payload) {
+  const fromResolver = resolver.recordIds;
+  if (Array.isArray(fromResolver) && fromResolver.length > 0) {
+    return fromResolver.map((v) => cleanText(v)).filter(Boolean);
+  }
+  const resolverOne = cleanText(resolver.recordId || resolver.id);
+  if (resolverOne) return [resolverOne];
 
-  if (!objectApiName || !recordId || fieldPaths.length === 0) return {};
+  const fromPayload = payload?.sourceRecordIds ?? payload?.recordIds;
+  if (Array.isArray(fromPayload) && fromPayload.length > 0) {
+    return fromPayload.map((v) => cleanText(v)).filter(Boolean);
+  }
+  const payloadOne = cleanText(payload?.sourceRecordId || payload?.recordId);
+  return payloadOne ? [payloadOne] : [];
+}
 
-  const soqlFields = fieldPaths.map((path) => toSoqlPath(path));
-  const soql = [
-    `SELECT Id, ${soqlFields.join(', ')}`,
-    `FROM ${objectApiName}`,
-    `WHERE Id = '${escapeSoqlLiteral(recordId)}'`,
-    'LIMIT 1',
-  ].join(' ');
-
-  const queryResult = await querySalesforce(soql, env);
-  const record = Array.isArray(queryResult?.records) ? queryResult.records[0] : null;
-  if (!record) return {};
-
+function buildResolvedFromSalesforceRecord(record, fieldPaths, soqlFields) {
   const resolved = {};
   for (let i = 0; i < fieldPaths.length; i += 1) {
     const originalPath = fieldPaths[i];
@@ -98,18 +88,70 @@ async function resolveAutoSourceData(payload, env) {
     const value = getByPath(record, soqlPath);
     setByPath(resolved, originalPath, value === undefined ? '' : value);
   }
+  return resolved;
+}
 
+function wrapSourceResult(resolved, recordId, objectApiName, targetRoot) {
   const result = {
     ...resolved,
     source_record_id: recordId,
     source_object_api_name: objectApiName,
   };
-
   if (targetRoot) {
     result[targetRoot] = resolved;
   }
-
   return result;
+}
+
+const SOQL_IN_MAX = 200;
+
+async function resolveAutoSourceData(payload, env) {
+  const resolver = payload?.dataResolver || payload?.sourceResolver || {};
+  const objectApiName = cleanText(
+    resolver.objectApiName || resolver.objectType || payload?.sourceObjectApiName
+  );
+  const fieldPaths = normalizeFieldPaths(
+    resolver.fieldPaths || payload?.sourceFieldPaths
+  );
+  const targetRoot = cleanText(resolver.targetRoot || objectApiName);
+
+  const idList = resolveRecordIdList(resolver, payload);
+  if (!objectApiName || idList.length === 0 || fieldPaths.length === 0) return {};
+
+  const ids = idList.slice(0, SOQL_IN_MAX);
+  const soqlFields = fieldPaths.map((path) => toSoqlPath(path));
+  const inList = ids.map((id) => `'${escapeSoqlLiteral(id)}'`).join(', ');
+  const soql = [
+    `SELECT Id, ${soqlFields.join(', ')}`,
+    `FROM ${objectApiName}`,
+    `WHERE Id IN (${inList})`,
+  ].join(' ');
+
+  const queryResult = await querySalesforce(soql, env);
+  const sfRecords = Array.isArray(queryResult?.records) ? queryResult.records : [];
+  const byId = new Map(sfRecords.map((r) => [r.Id, r]));
+  const orderedSf = ids.map((id) => byId.get(id)).filter(Boolean);
+
+  if (orderedSf.length === 0) return {};
+
+  const multiResults = orderedSf.map((sfRec) =>
+    wrapSourceResult(
+      buildResolvedFromSalesforceRecord(sfRec, fieldPaths, soqlFields),
+      sfRec.Id,
+      objectApiName,
+      targetRoot
+    )
+  );
+
+  const first = multiResults[0];
+  if (multiResults.length === 1) {
+    return first;
+  }
+
+  return {
+    ...first,
+    multi_source_records: multiResults,
+  };
 }
 
 module.exports = { resolveAutoSourceData };

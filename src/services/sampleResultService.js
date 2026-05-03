@@ -18,12 +18,18 @@ function formatDateDdMmYyyy(value) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+function percentageWithPercentSign(value) {
+  const raw = cleanText(value);
+  if (!raw) return '';
+  if (raw.endsWith('%')) return raw;
+  return `${raw}%`;
+}
+
 function buildAdmixtureText(record) {
-  const percentage = cleanText(record?.Percentage__c);
-  const comment = cleanText(record?.Comment__c || record?.Comments__c);
-  if (percentage && comment) return `${percentage}% - ${comment}`;
-  if (percentage) return `${percentage}%`;
-  return comment;
+  const percentage = percentageWithPercentSign(record?.Percentage__c);
+  const comment = cleanText(record?.Comments__c);
+  const line = [percentage, comment].filter(Boolean).join(' ');
+  return line;
 }
 
 function readInstructionId(payload) {
@@ -61,10 +67,10 @@ async function fetchSampleResultsByIds(sampleResultIds, env) {
     .map((id) => `'${escapeSoqlLiteral(id)}'`)
     .join(', ');
   const soql = [
-    'SELECT Id, Name, Sample_Location__c, Moisture__c, Specific_Weight__c, Nitrogen__c, Protein__c,',
-    'SCR_S_20__c, SCR_S_225__c, SCR_S_25__c, Germination__c, Broken_Grains__c, Skinned__c, Hardness__c,',
-    'Instruction__c, Instruction__r.Name, Instruction__r.Variety__c,',
-    'Instruction__r.Commodity__c, Instruction__r.Commodity__r.Name,',
+    'SELECT Id, Name, Sample_location__c, Moisture__c, Specific_Weight__c, Nitrogen__c, Protein__c,',
+    'Admixture_Sum__c, SCR_S_20__c, SCR_S_225__c, SCR_S_25__c, Germination__c, Broken_Grains__c, Skinned__c, Hardness__c,',
+    'Instruction__c, Instruction__r.Name, Instruction__r.Variety__c, Instruction__r.Variety__r.Name,',
+    'Instruction__r.Commodity__c, Instruction__r.Commodity__r.Name, Hagberg__c,',
     'Instruction__r.Account__c, Instruction__r.Account__r.Name',
     'FROM Sample_Result__c',
     `WHERE Id IN (${inClause})`,
@@ -73,23 +79,85 @@ async function fetchSampleResultsByIds(sampleResultIds, env) {
   return Array.isArray(data?.records) ? data.records : [];
 }
 
+function parseNumeric(value) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim().replace(/\s/g, '');
+  if (!raw) return null;
+  const normalized = raw.replace(/,/g, '.');
+  const n = Number.parseFloat(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sumNumericAcrossRows(rows, fieldKey) {
+  let sum = 0;
+  let hadAny = false;
+  for (const row of rows) {
+    const n = parseNumeric(row?.[fieldKey]);
+    if (n !== null) {
+      sum += n;
+      hadAny = true;
+    }
+  }
+  return hadAny ? sum : null;
+}
+
+function formatSummedNumber(n) {
+  if (!Number.isFinite(n)) return '';
+  const rounded = Math.round(n * 1e6) / 1e6;
+  if (Math.abs(rounded - Math.round(rounded)) < 1e-9) {
+    return String(Math.round(rounded));
+  }
+  return String(rounded);
+}
+
+/**
+ * One number for {admix_combined}: each of the 4 fields is summed across all sample result rows,
+ * then those four totals are added together.
+ */
+function buildAdmixtureFieldSummaryFromRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return '';
+  const parts = [
+    sumNumericAcrossRows(rows, 'admixture_sum'),
+    sumNumericAcrossRows(rows, 'scr_s_20'),
+    sumNumericAcrossRows(rows, 'scr_s_225'),
+    sumNumericAcrossRows(rows, 'scr_s_25'),
+  ];
+  let total = 0;
+  let any = false;
+  for (const p of parts) {
+    if (p !== null) {
+      total += p;
+      any = true;
+    }
+  }
+  if (!any) return '';
+  return formatSummedNumber(total);
+}
+
 function mapSampleResultRow(record) {
   const instruction = record?.Instruction__r || {};
   const commodity = instruction?.Commodity__r || {};
+  const varietyRel = instruction?.Variety__r || {};
   const account = instruction?.Account__r || {};
+  const varietyDisplayName = cleanText(
+    varietyRel?.Name || instruction?.Variety__c
+  );
   return {
     id: cleanText(record?.Id),
     instruction_id: cleanText(record?.Instruction__c),
     instruction_name: cleanText(instruction?.Name),
     sample_result_name: cleanText(record?.Name),
     commodity_name: cleanText(commodity?.Name || instruction?.Commodity__c),
+    hagberg: cleanText(record?.Hagberg__c),
     instruction_variety: cleanText(instruction?.Variety__c),
+    instruction_variety_name: varietyDisplayName,
     account_name: cleanText(account?.Name),
-    sample_location: cleanText(record?.Sample_Location__c),
+    sample_location: cleanText(record?.Sample_location__c),
     moisture: cleanText(record?.Moisture__c),
     specific_weight: cleanText(record?.Specific_Weight__c),
     nitrogen: cleanText(record?.Nitrogen__c ?? record?.Protein__c),
     protein: cleanText(record?.Protein__c ?? record?.Nitrogen__c),
+    admixture_sum: cleanText(record?.Admixture_Sum__c),
     scr_s_20: cleanText(record?.SCR_S_20__c),
     scr_s_225: cleanText(record?.SCR_S_225__c),
     scr_s_25: cleanText(record?.SCR_S_25__c),
@@ -100,10 +168,107 @@ function mapSampleResultRow(record) {
   };
 }
 
+function varietyDisplayForRow(row) {
+  return cleanText(row?.instruction_variety_name) || cleanText(row?.instruction_variety);
+}
+
+function enrichSampleResultRow(row) {
+  const vd = varietyDisplayForRow(row);
+  return {
+    ...row,
+    Instruction__c: {
+      Name: row.instruction_name,
+      Commodity__c: { Name: row.commodity_name },
+      Variety__c: { Name: vd },
+      Account__c: { Name: row.account_name },
+    },
+    Sample_Result__c: {
+      Name: row.sample_result_name,
+      Sample_location__c: row.sample_location,
+      Moisture__c: row.moisture,
+      Specific_Weight__c: row.specific_weight,
+      Nitrogen__c: row.nitrogen,
+      Protein__c: row.protein,
+      Hagberg__c: row.hagberg,
+      SCR_S_20__c: row.scr_s_20,
+      SCR_S_225__c: row.scr_s_225,
+      SCR_S_25__c: row.scr_s_25,
+      Admixture_Sum__c: row.admixture_sum,
+      Germination__c: row.germination,
+      Broken_Grains__c: row.broken_grains,
+      Skinned__c: row.skinned,
+      Hardness__c: row.hardness,
+    },
+  };
+}
+
+/** One row per Sample Instruction, order = first appearance when walking sample results in Id order. */
+function buildSampleInstructionRepeatRows(rows) {
+  const seen = new Set();
+  const picked = [];
+  for (const row of rows) {
+    const iid = row.instruction_id;
+    if (!iid) continue;
+    if (seen.has(iid)) continue;
+    seen.add(iid);
+    picked.push(row);
+  }
+  return picked.map(enrichSampleResultRow);
+}
+
+function sampleLinkIdFromAdmixtureRecord(record) {
+  return cleanText(record?.Sample_ID__c || record?.Sample_Id__c);
+}
+
+function sortAdmixturesBySampleResultIdOrder(records, sampleResultIds) {
+  const orderMap = new Map(sampleResultIds.map((id, i) => [cleanText(id), i]));
+  return [...records].sort((a, b) => {
+    const la = sampleLinkIdFromAdmixtureRecord(a);
+    const lb = sampleLinkIdFromAdmixtureRecord(b);
+    const ia = orderMap.has(la) ? orderMap.get(la) : 9999;
+    const ib = orderMap.has(lb) ? orderMap.get(lb) : 9999;
+    if (ia !== ib) return ia - ib;
+    return new Date(a?.CreatedDate || 0).getTime() - new Date(b?.CreatedDate || 0).getTime();
+  });
+}
+
+function buildAdmixturesMultilineText(records) {
+  return records.map(buildAdmixtureText).filter(Boolean).join('\n');
+}
+
+async function fetchAdmixturesBySampleIds(sampleResultIds, env) {
+  if (!Array.isArray(sampleResultIds) || sampleResultIds.length === 0) return [];
+  const inClause = sampleResultIds.map((id) => `'${escapeSoqlLiteral(id)}'`).join(', ');
+  const attempts = [
+    [
+      'SELECT Id, Sample_ID__c, Percentage__c, Comments__c, CreatedDate',
+      `WHERE Sample_ID__c IN (${inClause})`,
+    ],
+    [
+      'SELECT Id, Sample_Id__c, Percentage__c, Comments__c, CreatedDate',
+      `WHERE Sample_Id__c IN (${inClause})`,
+    ],
+  ];
+  for (const [selectPart, wherePart] of attempts) {
+    const fullSoql = [selectPart, 'FROM Admixture__c', wherePart, 'ORDER BY CreatedDate ASC'].join(' ');
+    try {
+      const data = await querySalesforce(fullSoql, env);
+      return Array.isArray(data?.records) ? data.records : [];
+    } catch (error) {
+      const sfErrors = Array.isArray(error?.response?.data) ? error.response.data : [];
+      const badField = sfErrors.some((entry) =>
+        ['INVALID_FIELD', 'MALFORMED_QUERY', 'INVALID_TYPE'].includes(entry?.errorCode)
+      );
+      if (!badField) throw error;
+    }
+  }
+  return [];
+}
+
 async function fetchAdmixturesByField(linkField, linkId, env) {
   if (!linkField || !linkId) return [];
   const soql = [
-    'SELECT Id, Percentage__c, Comments__c',
+    'SELECT Id, Percentage__c, Comments__c, CreatedDate',
     'FROM Admixture__c',
     `WHERE ${linkField} = '${escapeSoqlLiteral(linkId)}'`,
     'ORDER BY CreatedDate ASC',
@@ -132,16 +297,21 @@ async function resolveSampleResultContext(payload, env) {
     .filter(Boolean)
     .map(mapSampleResultRow);
 
-  context.sample_results_rows = rows;
+  context.sample_results_rows = rows.map(enrichSampleResultRow);
   context.sample_results_count = rows.length;
+
+  context.sample_instruction_rows = buildSampleInstructionRepeatRows(rows);
+  context.sample_instruction_rows_count = context.sample_instruction_rows.length;
 
   const firstRow = rows[0] || {};
   context['Instruction__c.Name'] = firstRow.instruction_name || '';
   context['Instruction__c.Commodity__c.Name'] = firstRow.commodity_name || '';
   context['Instruction__c.Variety__c'] = firstRow.instruction_variety || '';
+  context['Instruction__c.Variety__c.Name'] = varietyDisplayForRow(firstRow) || '';
   context['Instruction__c.Account__c.Name'] = firstRow.account_name || '';
+  context['Account__c.Name'] = firstRow.account_name || '';
   context['Sample_Result__c.Name'] = firstRow.sample_result_name || '';
-  context['Sample_Result__c.Sample_Location__c'] = firstRow.sample_location || '';
+  context['Sample_Result__c.Sample_location__c'] = firstRow.sample_location || '';
   context['Sample_Result__c.Moisture__c'] = firstRow.moisture || '';
   context['Sample_Result__c.Specific_Weight__c'] = firstRow.specific_weight || '';
   context['Sample_Result__c.Nitrogen__c'] = firstRow.nitrogen || '';
@@ -149,6 +319,7 @@ async function resolveSampleResultContext(payload, env) {
   context['Sample_Result__c.SCR_S_20__c'] = firstRow.scr_s_20 || '';
   context['Sample_Result__c.SCR_S_225__c'] = firstRow.scr_s_225 || '';
   context['Sample_Result__c.SCR_S_25__c'] = firstRow.scr_s_25 || '';
+  context['Sample_Result__c.Admixture_Sum__c'] = firstRow.admixture_sum || '';
   context['Sample_Result__c.Germination__c'] = firstRow.germination || '';
   context['Sample_Result__c.Broken_Grains__c'] = firstRow.broken_grains || '';
   context['Sample_Result__c.Skinned__c'] = firstRow.skinned || '';
@@ -157,40 +328,46 @@ async function resolveSampleResultContext(payload, env) {
   const primarySampleResultId = firstRow.id || sampleResultIds[0] || '';
   const instructionId = firstRow.instruction_id || readInstructionId(payload);
 
-  let admixtureRecords = [];
-  const candidates = [
-    ['Sample_Result__c', primarySampleResultId],
-    ['Sample_ID__c', primarySampleResultId],
-    ['Sample_Id__c', primarySampleResultId],
-    ['Instruction__c', instructionId],
-    ['Sample_Instruction__c', instructionId],
-  ];
+  let admixtureRecords = await fetchAdmixturesBySampleIds(sampleResultIds, env);
 
-  for (const [field, idValue] of candidates) {
-    if (!idValue) continue;
-    try {
-      admixtureRecords = await fetchAdmixturesByField(field, idValue, env);
-      if (admixtureRecords.length > 0) break;
-    } catch (error) {
-      const sfErrors = Array.isArray(error?.response?.data) ? error.response.data : [];
-      const badField = sfErrors.some((entry) =>
-        ['INVALID_FIELD', 'MALFORMED_QUERY', 'INVALID_TYPE'].includes(entry?.errorCode)
-      );
-      if (!badField) throw error;
+  if (admixtureRecords.length === 0) {
+    const candidates = [
+      ['Sample_Result__c', primarySampleResultId],
+      ['Sample_ID__c', primarySampleResultId],
+      ['Sample_Id__c', primarySampleResultId],
+      ['Instruction__c', instructionId],
+      ['Sample_Instruction__c', instructionId],
+    ];
+
+    for (const [field, idValue] of candidates) {
+      if (!idValue) continue;
+      try {
+        admixtureRecords = await fetchAdmixturesByField(field, idValue, env);
+        if (admixtureRecords.length > 0) break;
+      } catch (error) {
+        const sfErrors = Array.isArray(error?.response?.data) ? error.response.data : [];
+        const badField = sfErrors.some((entry) =>
+          ['INVALID_FIELD', 'MALFORMED_QUERY', 'INVALID_TYPE'].includes(entry?.errorCode)
+        );
+        if (!badField) throw error;
+      }
     }
   }
 
-  const admixtures = admixtureRecords
+  const sortedAdmix = sortAdmixturesBySampleResultIdOrder(admixtureRecords, sampleResultIds);
+
+  const admixtureChildRows = sortedAdmix
     .map((record) => ({
-      percentage: cleanText(record?.Percentage__c),
-      comment: cleanText(record?.Comment__c || record?.Comments__c),
+      percentage: percentageWithPercentSign(record?.Percentage__c),
+      comment: cleanText(record?.Comments__c),
       text: buildAdmixtureText(record),
     }))
     .filter((entry) => entry.text);
 
-  context.admixtures = admixtures.map((entry) => entry.text).join('\n');
-  context.admixtures_list = admixtures;
-  context.admixtures_count = admixtures.length;
+  context.admix_combined = buildAdmixtureFieldSummaryFromRows(rows);
+  context.admixtures = buildAdmixturesMultilineText(sortedAdmix);
+  context.admixtures_list = admixtureChildRows;
+  context.admixtures_count = admixtureChildRows.length;
 
   return context;
 }

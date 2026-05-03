@@ -69,13 +69,20 @@ async function generateDocx(payload) {
   };
 
   if (!payloadWithResolver?.dataResolver) {
-    const sourceRecordId = payload?.recordId || payload?.sourceRecordId;
     const sourceObjectApiName = payload?.objectApiName;
     const fieldPaths = mappingByApiName?.mapping?.fieldPaths;
-    if (sourceRecordId && sourceObjectApiName && Array.isArray(fieldPaths) && fieldPaths.length > 0) {
+    const fromArray = payload?.sourceRecordIds ?? payload?.recordIds;
+    const idList = Array.isArray(fromArray) && fromArray.length > 0
+      ? fromArray.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    const sourceRecordId = String(payload?.recordId || payload?.sourceRecordId || '').trim();
+    const recordIds =
+      idList.length > 0 ? idList : sourceRecordId ? [sourceRecordId] : [];
+
+    if (recordIds.length > 0 && sourceObjectApiName && Array.isArray(fieldPaths) && fieldPaths.length > 0) {
       payloadWithResolver.dataResolver = {
         objectApiName: sourceObjectApiName,
-        recordId: sourceRecordId,
+        recordIds,
         fieldPaths,
       };
     }
