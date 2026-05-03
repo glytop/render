@@ -5,6 +5,27 @@ function cleanText(value) {
   return String(value).trim();
 }
 
+/** First 15 chars, uppercased — совпадение 15- и 18-символьных Salesforce Id. */
+function comparableSalesforceId(id) {
+  const s = cleanText(id);
+  if (!s) return '';
+  return s.length >= 15 ? s.slice(0, 15).toUpperCase() : s.toUpperCase();
+}
+
+function dedupeSampleResultIdsPreservingOrder(ids) {
+  const seen = new Set();
+  const out = [];
+  for (const id of ids) {
+    const t = cleanText(id);
+    if (!t) continue;
+    const k = comparableSalesforceId(t);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+
 function escapeSoqlLiteral(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
@@ -68,9 +89,10 @@ async function fetchSampleResultsByIds(sampleResultIds, env) {
     .join(', ');
   const soql = [
     'SELECT Id, Name, Sample_location__c, Moisture__c, Specific_Weight__c, Nitrogen__c, Protein__c,',
-    'Admixture_Sum__c, SCR_S_20__c, SCR_S_225__c, SCR_S_25__c, Germination__c, Broken_Grains__c, Skinned__c, Hardness__c,',
+    'Admixture_Sum__c, SCR_S_20__c, SCR_S_225__c, SCR_S_25__c, Hagberg__c,',
+    'Germination__c, Broken_Grains__c, Skinned__c, Hardness__c,',
     'Instruction__c, Instruction__r.Name, Instruction__r.Variety__c, Instruction__r.Variety__r.Name,',
-    'Instruction__r.Commodity__c, Instruction__r.Commodity__r.Name, Hagberg__c,',
+    'Instruction__r.Commodity__c, Instruction__r.Commodity__r.Name,',
     'Instruction__r.Account__c, Instruction__r.Account__r.Name',
     'FROM Sample_Result__c',
     `WHERE Id IN (${inClause})`,
@@ -174,13 +196,15 @@ function varietyDisplayForRow(row) {
 
 function enrichSampleResultRow(row) {
   const vd = varietyDisplayForRow(row);
+  const accountName = row.account_name || '';
   return {
     ...row,
+    Account__c: { Name: accountName },
     Instruction__c: {
       Name: row.instruction_name,
       Commodity__c: { Name: row.commodity_name },
       Variety__c: { Name: vd },
-      Account__c: { Name: row.account_name },
+      Account__c: { Name: accountName },
     },
     Sample_Result__c: {
       Name: row.sample_result_name,
@@ -202,18 +226,42 @@ function enrichSampleResultRow(row) {
   };
 }
 
-/** One row per Sample Instruction, order = first appearance when walking sample results in Id order. */
-function buildSampleInstructionRepeatRows(rows) {
-  const seen = new Set();
-  const picked = [];
-  for (const row of rows) {
-    const iid = row.instruction_id;
-    if (!iid) continue;
-    if (seen.has(iid)) continue;
-    seen.add(iid);
-    picked.push(row);
-  }
-  return picked.map(enrichSampleResultRow);
+/**
+ * Docxtemplater в цикле для `{Sample_Result__c.Moisture__c}` ищет значение на строке;
+ * плоские ключи с точкой на родителе (из первой строки) перекрывают вложенность — дублируем те же пути на объект строки.
+ */
+function addDottedPathAliasesForRow(enriched, row) {
+  const vd = varietyDisplayForRow(row);
+  enriched['Instruction__c.Name'] = row.instruction_name || '';
+  enriched['Instruction__c.Commodity__c.Name'] = row.commodity_name || '';
+  enriched['Instruction__c.Variety__c.Name'] = vd;
+  enriched['Instruction__c.Account__c.Name'] = row.account_name || '';
+  enriched['Account__c.Name'] = row.account_name || '';
+  enriched['Sample_Result__c.Name'] = row.sample_result_name || '';
+  enriched['Sample_Result__c.Sample_location__c'] = row.sample_location || '';
+  enriched['Sample_Result__c.Moisture__c'] = row.moisture || '';
+  enriched['Sample_Result__c.Specific_Weight__c'] = row.specific_weight || '';
+  enriched['Sample_Result__c.Nitrogen__c'] = row.nitrogen || '';
+  enriched['Sample_Result__c.Protein__c'] = row.protein || '';
+  enriched['Sample_Result__c.Hagberg__c'] = row.hagberg || '';
+  enriched['Sample_Result__c.SCR_S_20__c'] = row.scr_s_20 || '';
+  enriched['Sample_Result__c.SCR_S_225__c'] = row.scr_s_225 || '';
+  enriched['Sample_Result__c.SCR_S_25__c'] = row.scr_s_25 || '';
+  enriched['Sample_Result__c.Admixture_Sum__c'] = row.admixture_sum || '';
+  enriched['Sample_Result__c.Germination__c'] = row.germination || '';
+  enriched['Sample_Result__c.Broken_Grains__c'] = row.broken_grains || '';
+  enriched['Sample_Result__c.Skinned__c'] = row.skinned || '';
+  enriched['Sample_Result__c.Hardness__c'] = row.hardness || '';
+  return enriched;
+}
+
+function enrichSampleResultRowWithAdmixtures(row, admixturesBySampleId) {
+  const map = admixturesBySampleId instanceof Map ? admixturesBySampleId : new Map();
+  const enriched = enrichSampleResultRow(row);
+  enriched.admixtures = map.get(row.id) || '';
+  enriched.admix_combined = buildAdmixtureFieldSummaryFromRows([row]);
+  addDottedPathAliasesForRow(enriched, row);
+  return enriched;
 }
 
 function sampleLinkIdFromAdmixtureRecord(record) {
@@ -234,6 +282,39 @@ function sortAdmixturesBySampleResultIdOrder(records, sampleResultIds) {
 
 function buildAdmixturesMultilineText(records) {
   return records.map(buildAdmixtureText).filter(Boolean).join('\n');
+}
+
+/**
+ * Map Sample_Result__c Id → multiline admixture text for that result only.
+ * If records have no Sample_ID__c (legacy link query), attach all lines to primarySampleResultId.
+ */
+function buildAdmixturesLinesBySampleResultIdMap(sortedRecords, primarySampleResultId) {
+  const bySample = new Map();
+  for (const rec of sortedRecords) {
+    const sid = sampleLinkIdFromAdmixtureRecord(rec);
+    if (!sid) continue;
+    if (!bySample.has(sid)) bySample.set(sid, []);
+    bySample.get(sid).push(rec);
+  }
+  const out = new Map();
+  for (const [sid, list] of bySample) {
+    list.sort(
+      (a, b) =>
+        new Date(a?.CreatedDate || 0).getTime() - new Date(b?.CreatedDate || 0).getTime()
+    );
+    out.set(sid, buildAdmixturesMultilineText(list));
+  }
+  if (
+    out.size === 0 &&
+    sortedRecords.length > 0 &&
+    cleanText(primarySampleResultId)
+  ) {
+    out.set(
+      cleanText(primarySampleResultId),
+      buildAdmixturesMultilineText(sortedRecords)
+    );
+  }
+  return out;
 }
 
 async function fetchAdmixturesBySampleIds(sampleResultIds, env) {
@@ -287,44 +368,20 @@ async function resolveSampleResultContext(payload, env) {
     today: formatDateDdMmYyyy(orgNow),
   };
 
-  const sampleResultIds = normalizeSampleResultIds(payload);
+  const sampleResultIdsRaw = normalizeSampleResultIds(payload);
+  const sampleResultIds = dedupeSampleResultIdsPreservingOrder(sampleResultIdsRaw);
   if (sampleResultIds.length === 0) return context;
 
   const records = await fetchSampleResultsByIds(sampleResultIds, env);
-  const byId = new Map(records.map((record) => [cleanText(record?.Id), record]));
+  const byId = new Map(
+    records.map((record) => [comparableSalesforceId(record?.Id), record])
+  );
   const rows = sampleResultIds
-    .map((id) => byId.get(id))
+    .map((id) => byId.get(comparableSalesforceId(id)))
     .filter(Boolean)
     .map(mapSampleResultRow);
 
-  context.sample_results_rows = rows.map(enrichSampleResultRow);
-  context.sample_results_count = rows.length;
-
-  context.sample_instruction_rows = buildSampleInstructionRepeatRows(rows);
-  context.sample_instruction_rows_count = context.sample_instruction_rows.length;
-
   const firstRow = rows[0] || {};
-  context['Instruction__c.Name'] = firstRow.instruction_name || '';
-  context['Instruction__c.Commodity__c.Name'] = firstRow.commodity_name || '';
-  context['Instruction__c.Variety__c'] = firstRow.instruction_variety || '';
-  context['Instruction__c.Variety__c.Name'] = varietyDisplayForRow(firstRow) || '';
-  context['Instruction__c.Account__c.Name'] = firstRow.account_name || '';
-  context['Account__c.Name'] = firstRow.account_name || '';
-  context['Sample_Result__c.Name'] = firstRow.sample_result_name || '';
-  context['Sample_Result__c.Sample_location__c'] = firstRow.sample_location || '';
-  context['Sample_Result__c.Moisture__c'] = firstRow.moisture || '';
-  context['Sample_Result__c.Specific_Weight__c'] = firstRow.specific_weight || '';
-  context['Sample_Result__c.Nitrogen__c'] = firstRow.nitrogen || '';
-  context['Sample_Result__c.Protein__c'] = firstRow.protein || '';
-  context['Sample_Result__c.SCR_S_20__c'] = firstRow.scr_s_20 || '';
-  context['Sample_Result__c.SCR_S_225__c'] = firstRow.scr_s_225 || '';
-  context['Sample_Result__c.SCR_S_25__c'] = firstRow.scr_s_25 || '';
-  context['Sample_Result__c.Admixture_Sum__c'] = firstRow.admixture_sum || '';
-  context['Sample_Result__c.Germination__c'] = firstRow.germination || '';
-  context['Sample_Result__c.Broken_Grains__c'] = firstRow.broken_grains || '';
-  context['Sample_Result__c.Skinned__c'] = firstRow.skinned || '';
-  context['Sample_Result__c.Hardness__c'] = firstRow.hardness || '';
-
   const primarySampleResultId = firstRow.id || sampleResultIds[0] || '';
   const instructionId = firstRow.instruction_id || readInstructionId(payload);
 
@@ -355,6 +412,52 @@ async function resolveSampleResultContext(payload, env) {
   }
 
   const sortedAdmix = sortAdmixturesBySampleResultIdOrder(admixtureRecords, sampleResultIds);
+  const admixturesBySampleId = buildAdmixturesLinesBySampleResultIdMap(
+    sortedAdmix,
+    primarySampleResultId
+  );
+
+  const resultTableRows = rows.map((r) =>
+    enrichSampleResultRowWithAdmixtures(r, admixturesBySampleId)
+  );
+  context.sample_results_rows = resultTableRows;
+  context.sample_results_count = resultTableRows.length;
+  context.sample_instruction_rows = resultTableRows;
+  context.sample_instruction_rows_count = resultTableRows.length;
+
+  /**
+   * Плоские ключи с точкой на корне совпадают с тегами в таблице; при нескольких строках Docxtemplater
+   * подставляет их внутри цикла вместо полей строки — оставляем только при одной строке.
+   */
+  if (rows.length <= 1) {
+    context['Instruction__c.Name'] = firstRow.instruction_name || '';
+    context['Instruction__c.Commodity__c.Name'] = firstRow.commodity_name || '';
+    context['Instruction__c.Variety__c'] = firstRow.instruction_variety || '';
+    context['Instruction__c.Variety__c.Name'] = varietyDisplayForRow(firstRow) || '';
+    context['Instruction__c.Account__c.Name'] = firstRow.account_name || '';
+    context['Account__c.Name'] = firstRow.account_name || '';
+    context['Sample_Result__c.Name'] = firstRow.sample_result_name || '';
+    context['Sample_Result__c.Sample_location__c'] = firstRow.sample_location || '';
+    context['Sample_Result__c.Moisture__c'] = firstRow.moisture || '';
+    context['Sample_Result__c.Specific_Weight__c'] = firstRow.specific_weight || '';
+    context['Sample_Result__c.Nitrogen__c'] = firstRow.nitrogen || '';
+    context['Sample_Result__c.Protein__c'] = firstRow.protein || '';
+    context['Sample_Result__c.Hagberg__c'] = firstRow.hagberg || '';
+    context['Sample_Result__c.SCR_S_20__c'] = firstRow.scr_s_20 || '';
+    context['Sample_Result__c.SCR_S_225__c'] = firstRow.scr_s_225 || '';
+    context['Sample_Result__c.SCR_S_25__c'] = firstRow.scr_s_25 || '';
+    context['Sample_Result__c.Admixture_Sum__c'] = firstRow.admixture_sum || '';
+    context['Sample_Result__c.Germination__c'] = firstRow.germination || '';
+    context['Sample_Result__c.Broken_Grains__c'] = firstRow.broken_grains || '';
+    context['Sample_Result__c.Skinned__c'] = firstRow.skinned || '';
+    context['Sample_Result__c.Hardness__c'] = firstRow.hardness || '';
+    context.Account__c = { Name: firstRow.account_name || '' };
+  } else {
+    const growerName = firstRow.account_name || '';
+    context['Instruction__c.Account__c.Name'] = growerName;
+    context['Account__c.Name'] = growerName;
+    context.Account__c = { Name: growerName };
+  }
 
   const admixtureChildRows = sortedAdmix
     .map((record) => ({

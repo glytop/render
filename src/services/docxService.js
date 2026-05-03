@@ -36,6 +36,25 @@ function deepMerge(base, override) {
   return merged;
 }
 
+/**
+ * Mapping (`resolveFieldsData`) кладёт в корень плоские ключи вроде `Sample_Result__c.Moisture__c`
+ * с первой записи. При нескольких строках Docxtemplater внутри `{#sample_instruction_rows}` часто
+ * берёт эти корневые значения вместо полей текущей строки — удаляем их, если в таблице >1 строки.
+ */
+function stripSampleResultConflictingRootFlatKeys(context) {
+  const rows = context?.sample_instruction_rows;
+  if (!Array.isArray(rows) || rows.length <= 1) return;
+  for (const key of Object.keys(context)) {
+    const keepInstructionAccountName = key === 'Instruction__c.Account__c.Name';
+    if (key.startsWith('Instruction__c.') && !keepInstructionAccountName) {
+      delete context[key];
+    } else if (key.startsWith('Sample_Result__c.')) {
+      delete context[key];
+    }
+    /* Account__c.Name оставляем: для Grower вне цикла — имя счёта первой строки (sampleResultService). */
+  }
+}
+
 function sanitizeTemplateZip(zip) {
   const files = Object.keys(zip.files || {});
   files
@@ -121,6 +140,7 @@ async function generateDocx(payload) {
     ...sampleResultContext,
     ...footerContext,
   });
+  stripSampleResultConflictingRootFlatKeys(context);
 
   doc.render(context);
 
