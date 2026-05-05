@@ -15,11 +15,10 @@ function sanitizeText(text) {
   return text
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, '')
-    .replace(/\t/g, ' ')
+    .replace(/\t/g, '\u00A0\u00A0\u00A0\u00A0')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/[^\x20-\x7E\u00A0-\uFFFF\n]/g, '')
-    .replace(/\u00A0/g, ' ')
     .split(/\n+/)
     .map((t) => t.trim())
     .filter(Boolean)
