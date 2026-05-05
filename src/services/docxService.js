@@ -12,6 +12,7 @@ const { resolveHaulageScheduleContext } = require('./haulageScheduleService');
 const { resolveMovementSheetContext } = require('./movementSheetService');
 const { resolveFooterContext } = require('./footerService');
 const { resolveSampleResultContext } = require('./sampleResultService');
+const { resolveInvoiceContext } = require('./invoiceService');
 const { getMappingByObjectApiName } = require('../mappings');
 
 function deepMerge(base, override) {
@@ -36,11 +37,6 @@ function deepMerge(base, override) {
   return merged;
 }
 
-/**
- * Mapping (`resolveFieldsData`) кладёт в корень плоские ключи вроде `Sample_Result__c.Moisture__c`
- * с первой записи. При нескольких строках Docxtemplater внутри `{#sample_instruction_rows}` часто
- * берёт эти корневые значения вместо полей текущей строки — удаляем их, если в таблице >1 строки.
- */
 function stripSampleResultConflictingRootFlatKeys(context) {
   const rows = context?.sample_instruction_rows;
   if (!Array.isArray(rows) || rows.length <= 1) return;
@@ -51,7 +47,6 @@ function stripSampleResultConflictingRootFlatKeys(context) {
     } else if (key.startsWith('Sample_Result__c.')) {
       delete context[key];
     }
-    /* Account__c.Name оставляем: для Grower вне цикла — имя счёта первой строки (sampleResultService). */
   }
 }
 
@@ -122,6 +117,7 @@ async function generateDocx(payload) {
   const haulageScheduleContext = resolveHaulageScheduleContext(payloadWithAutoSource);
   const movementSheetContext = await resolveMovementSheetContext(payloadWithAutoSource, env);
   const sampleResultContext = await resolveSampleResultContext(payloadWithAutoSource, env);
+  const invoiceContext = await resolveInvoiceContext(payloadWithAutoSource, env);
   const footerContext = await resolveFooterContext(payload, env);
   const imageModule = createImageModule(payloadWithAutoSource, imageById);
   const doc = new Docxtemplater(zip, {
@@ -138,6 +134,7 @@ async function generateDocx(payload) {
     ...haulageScheduleContext,
     ...movementSheetContext,
     ...sampleResultContext,
+    ...invoiceContext,
     ...footerContext,
   });
   stripSampleResultConflictingRootFlatKeys(context);

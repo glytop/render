@@ -5,7 +5,6 @@ function cleanText(value) {
   return String(value).trim();
 }
 
-/** First 15 chars, uppercased — совпадение 15- и 18-символьных Salesforce Id. */
 function comparableSalesforceId(id) {
   const s = cleanText(id);
   if (!s) return '';
@@ -132,10 +131,6 @@ function formatSummedNumber(n) {
   return String(rounded);
 }
 
-/**
- * One number for {admix_combined}: each of the 4 fields is summed across all sample result rows,
- * then those four totals are added together.
- */
 function buildAdmixtureFieldSummaryFromRows(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return '';
   const parts = [
@@ -226,10 +221,6 @@ function enrichSampleResultRow(row) {
   };
 }
 
-/**
- * Docxtemplater в цикле для `{Sample_Result__c.Moisture__c}` ищет значение на строке;
- * плоские ключи с точкой на родителе (из первой строки) перекрывают вложенность — дублируем те же пути на объект строки.
- */
 function addDottedPathAliasesForRow(enriched, row) {
   const vd = varietyDisplayForRow(row);
   enriched['Instruction__c.Name'] = row.instruction_name || '';
@@ -284,10 +275,7 @@ function buildAdmixturesMultilineText(records) {
   return records.map(buildAdmixtureText).filter(Boolean).join('\n');
 }
 
-/**
- * Map Sample_Result__c Id → multiline admixture text for that result only.
- * If records have no Sample_ID__c (legacy link query), attach all lines to primarySampleResultId.
- */
+
 function buildAdmixturesLinesBySampleResultIdMap(sortedRecords, primarySampleResultId) {
   const bySample = new Map();
   for (const rec of sortedRecords) {
@@ -425,10 +413,7 @@ async function resolveSampleResultContext(payload, env) {
   context.sample_instruction_rows = resultTableRows;
   context.sample_instruction_rows_count = resultTableRows.length;
 
-  /**
-   * Плоские ключи с точкой на корне совпадают с тегами в таблице; при нескольких строках Docxtemplater
-   * подставляет их внутри цикла вместо полей строки — оставляем только при одной строке.
-   */
+ 
   if (rows.length <= 1) {
     context['Instruction__c.Name'] = firstRow.instruction_name || '';
     context['Instruction__c.Commodity__c.Name'] = firstRow.commodity_name || '';

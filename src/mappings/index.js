@@ -5,6 +5,7 @@ const haulageInstruction = require('./haulageInstruction');
 const movementSheet = require('./movementSheet');
 const sampleInstruction = require('./sampleInstruction');
 const sampleResult = require('./sampleResult');
+const invoice = require('./invoice');
 
 const mappings = {
   Opportunity: opportunity,
@@ -14,6 +15,7 @@ const mappings = {
   Movement_Sheet__c: movementSheet,
   Sample_Instruction__c: sampleInstruction,
   Sample_Result__c: sampleResult,
+  Invoice__c: invoice,
 };
 
 function getMapping(objectType) {
