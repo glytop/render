@@ -132,6 +132,7 @@ function map(data) {
     'Invoice_Line__c.Movement__c.Movement_Sheet__c.Delivery_Reference__c':
      invoiceLine?.Movement__c?.Movement_Sheet__c?.Delivery_Reference__c ?? '',
     'Invoice_Line__c.Movement__c.W_T_No__c': invoiceLine?.Movement__c?.W_T_No__c ?? '',
+    'Invoice_Line__c.WTNo__c': invoiceLine?.WTNo__c ?? '',
     'Invoice_Line__c.Line_Text__c': invoiceLine.Line_Text__c ?? '',
     'Invoice_Line__c.Pre_VAT_Total__c': invoiceLine.Pre_VAT_Total__c ?? '',
     'Invoice_Line__c.Movement__c.Tonnage__c': invoiceLine?.Movement__c?.Tonnage__c ?? '',

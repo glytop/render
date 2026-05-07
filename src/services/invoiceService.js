@@ -38,6 +38,7 @@ function mapInvoiceLineRow(record) {
   return {
     id: clean(record?.Id),
     pi_line_type: clean(record?.PI_Line_Type__c ?? record?.PL_Line_Type__c),
+    wtno: clean(record?.WTNo__c),
     haulier_name: clean(record?.Haulier__r?.Name),
     line_text: clean(record?.Line_Text__c),
     pre_vat_total: clean(record?.Pre_VAT_Total__c),
@@ -101,6 +102,7 @@ function enrichInvoiceLineRowForTemplate(row) {
   enriched['Invoice_Line__c.VAT__c'] = clean(row.vat);
   enriched['Invoice_Line__c.VAT_Amount__c'] = clean(row.vat_amount);
   enriched['Invoice_Line__c.Delivery_Date__c'] = clean(row.delivery_date);
+  enriched['Invoice_Line__c.WTNo__c'] = clean(row.wtno);
   enriched['Invoice_Line__c.Movement__c.Booking_Reference__c'] = bookingReference;
   enriched['Invoice_Line__c.Movement__c.Booking_Reference_No__c'] = bookingReference;
   enriched['Invoice_Line__c.Movement__c.W_T_No__c'] = clean(row.w_t_no);
@@ -120,7 +122,7 @@ async function resolveInvoiceContext(payload, env) {
 
   const soql = [
     'SELECT Id, PI_Line_Type__c, Haulier__r.Name, Line_Text__c, Pre_VAT_Total__c, Quantity__c, Reg_No__c, Unit_Price__c, VAT__c, VAT_Amount__c,',
-    'Delivery_Date__c, Movement__r.Booking_Reference_No__c, Movement__r.W_T_No__c, Movement__r.Tonnage__c,',
+    'Delivery_Date__c, Movement__r.Booking_Reference_No__c, Movement__r.W_T_No__c, Movement__r.Tonnage__c, WTNo__c,',
     'Movement__r.Movement_Sheet__r.Commodity__c, Movement__r.Movement_Sheet__r.Delivery_Address__c, Movement__r.Movement_Sheet__r.Delivery_Reference__c',
     'FROM Invoice_Line__c',
     `WHERE Invoice__c = '${escapeSoqlLiteral(invoiceId)}'`,
@@ -158,6 +160,7 @@ async function resolveInvoiceContext(payload, env) {
       VAT__c: first.vat || '',
       VAT_Amount__c: first.vat_amount || '',
       Delivery_Date__c: first.delivery_date || '',
+      WTNo__c: first.wtno || '',
       Movement__c: {
         Booking_Reference__c: first.booking_reference || '',
         Booking_Reference_No__c: first.booking_reference || '',
@@ -179,6 +182,7 @@ async function resolveInvoiceContext(payload, env) {
     'Invoice_Line__c.VAT__c': first['Invoice_Line__c.VAT__c'] || '',
     'Invoice_Line__c.VAT_Amount__c': first['Invoice_Line__c.VAT_Amount__c'] || '',
     'Invoice_Line__c.Delivery_Date__c': first['Invoice_Line__c.Delivery_Date__c'] || '',
+    'Invoice_Line__c.WTNo__c': first['Invoice_Line__c.WTNo__c'] || '',
     'Invoice_Line__c.Movement__c.Booking_Reference__c':
       first['Invoice_Line__c.Movement__c.Booking_Reference__c'] || '',
     'Invoice_Line__c.Movement__c.Booking_Reference_No__c':
@@ -212,6 +216,7 @@ async function resolveInvoiceContext(payload, env) {
     'Invoice_Line__c.VAT__c',
     'Invoice_Line__c.VAT_Amount__c',
     'Invoice_Line__c.Delivery_Date__c',
+    'Invoice_Line__c.WTNo__c',
     'Invoice_Line__c.Movement__c.Booking_Reference__c',
     'Invoice_Line__c.Movement__c.Booking_Reference_No__c',
     'Invoice_Line__c.Movement__c.W_T_No__c',
