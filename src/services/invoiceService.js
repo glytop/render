@@ -65,7 +65,7 @@ function mapInvoiceLineRow(record) {
 
 function enrichInvoiceLineRowForTemplate(row) {
   const bookingReference = clean(row.booking_reference);
-  const qty = clean(row.tonnage || row.quantity);
+  const qty = clean(row.quantity);
   const enriched = {
     ...row,
     quantity: qty,
