@@ -21,16 +21,41 @@ function formatDateDdMmYyyy(value) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+function parseNumeric(value) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim().replace(/\s/g, '').replace(/,/g, '');
+  if (!raw) return null;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatSummedNumber(n) {
+  if (!Number.isFinite(n)) return '';
+  const rounded = Math.round(n * 1e6) / 1e6;
+  if (Math.abs(rounded - Math.round(rounded)) < 1e-9) return String(Math.round(rounded));
+  return String(rounded);
+}
+
+function lineTypeToTagSlug(value) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function buildDescriptionInvoice(row) {
   return [
     clean(row.commodity),
-    row.delivery_address ? `Delivered to ${clean(row.delivery_address)}` : '',
-    row.delivery_reference ? `Del. Ref ${clean(row.delivery_reference)}` : '',
-    row.booking_reference ? `Booking Ref ${clean(row.booking_reference)}` : '',
+    row.delivery_address ? 'Delivered to' : '',
+    clean(row.delivery_address),
+    row.delivery_reference ? 'Del. Ref' : '',
+    clean(row.delivery_reference),
+    row.booking_reference ? 'Booking Ref' : '',
+    clean(row.booking_reference),
     clean(row.w_t_no),
   ]
     .filter(Boolean)
-    .join(' ')
+    .join('\n')
     .trim();
 }
 
@@ -48,10 +73,7 @@ function mapInvoiceLineRow(record) {
     vat: clean(record?.VAT__c),
     vat_amount: clean(record?.VAT_Amount__c),
     delivery_date: formatDateDdMmYyyy(record?.Delivery_Date__c),
-    booking_reference: clean(
-      record?.Movement__r?.Booking_Reference__c ??
-        record?.Movement__r?.Booking_Reference_No__c
-    ),
+    booking_reference: clean(record?.Movement__r?.Booking_Reference_No__c),
     w_t_no: clean(record?.Movement__r?.W_T_No__c),
     tonnage: clean(record?.Movement__r?.Tonnage__c),
     commodity: clean(record?.Movement__r?.Movement_Sheet__r?.Commodity__c),
@@ -67,9 +89,12 @@ function mapInvoiceLineRow(record) {
 function enrichInvoiceLineRowForTemplate(row) {
   const bookingReference = clean(row.booking_reference);
   const qty = clean(row.quantity);
+  const descriptionInvoice = buildDescriptionInvoice(row);
   const enriched = {
     ...row,
     quantity: qty,
+    description_invoice: descriptionInvoice,
+    description: descriptionInvoice,
     Invoice_Line__c: {
       Haulier__c: { Name: clean(row.haulier_name) },
       Line_Text__c: clean(row.line_text),
@@ -103,6 +128,8 @@ function enrichInvoiceLineRowForTemplate(row) {
   enriched['Invoice_Line__c.VAT_Amount__c'] = clean(row.vat_amount);
   enriched['Invoice_Line__c.Delivery_Date__c'] = clean(row.delivery_date);
   enriched['Invoice_Line__c.WTNo__c'] = clean(row.wtno);
+  enriched.description_invoice = descriptionInvoice;
+  enriched.description = descriptionInvoice;
   enriched['Invoice_Line__c.Movement__c.Booking_Reference__c'] = bookingReference;
   enriched['Invoice_Line__c.Movement__c.Booking_Reference_No__c'] = bookingReference;
   enriched['Invoice_Line__c.Movement__c.W_T_No__c'] = clean(row.w_t_no);
@@ -113,6 +140,56 @@ function enrichInvoiceLineRowForTemplate(row) {
   enriched['Invoice_Line__c.Movement__c.Movement_Sheet__c.Delivery_Reference__c'] =
     clean(row.delivery_reference);
   return enriched;
+}
+
+function buildLineTypeSumTags(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const lineType = clean(row.pi_line_type);
+    if (!lineType) continue;
+    if (!grouped.has(lineType)) {
+      grouped.set(lineType, {
+        unit_price_sum: 0,
+        pre_vat_total_sum: 0,
+        vat_amount_sum: 0,
+        hadUnitPrice: false,
+        hadPreVat: false,
+        hadVatAmount: false,
+      });
+    }
+    const bucket = grouped.get(lineType);
+    const unitPrice = parseNumeric(row.unit_price);
+    if (unitPrice !== null) {
+      bucket.unit_price_sum += unitPrice;
+      bucket.hadUnitPrice = true;
+    }
+    const preVat = parseNumeric(row.pre_vat_total);
+    if (preVat !== null) {
+      bucket.pre_vat_total_sum += preVat;
+      bucket.hadPreVat = true;
+    }
+    const vatAmount = parseNumeric(row.vat_amount);
+    if (vatAmount !== null) {
+      bucket.vat_amount_sum += vatAmount;
+      bucket.hadVatAmount = true;
+    }
+  }
+
+  const tags = {};
+  for (const [lineType, sums] of grouped) {
+    const slug = lineTypeToTagSlug(lineType);
+    if (!slug) continue;
+    tags[`invoice_line_type_${slug}_unit_price_sum`] = sums.hadUnitPrice
+      ? formatSummedNumber(sums.unit_price_sum)
+      : '';
+    tags[`invoice_line_type_${slug}_amount_sum`] = sums.hadPreVat
+      ? formatSummedNumber(sums.pre_vat_total_sum)
+      : '';
+    tags[`invoice_line_type_${slug}_vat_sum`] = sums.hadVatAmount
+      ? formatSummedNumber(sums.vat_amount_sum)
+      : '';
+  }
+  return tags;
 }
 
 async function resolveInvoiceContext(payload, env) {
@@ -204,6 +281,7 @@ async function resolveInvoiceContext(payload, env) {
       firstCommodity['Invoice_Line__c.Pre_VAT_Total__c'] || '',
     'Invoice_Line__c.Commodity.VAT_Amount__c':
       firstCommodity['Invoice_Line__c.VAT_Amount__c'] || '',
+    ...buildLineTypeSumTags(rows),
   };
 
   const indexedPaths = [
