@@ -41,6 +41,12 @@ function numericOrZero(value) {
   return n === null ? 0 : n;
 }
 
+function hideZeroNumber(value) {
+  const n = parseNumeric(value);
+  if (n !== null && Math.abs(n) < 1e-12) return '';
+  return clean(value);
+}
+
 function lineTypeToTagSlug(value) {
   return clean(value)
     .toLowerCase()
@@ -76,8 +82,8 @@ function mapInvoiceLineRow(record) {
     quantity: clean(record?.Quantity__c),
     reg_no: clean(record?.Reg_No__c),
     unit_price: clean(record?.Unit_Price__c),
-    vat: clean(record?.VAT__c),
-    vat_amount: clean(record?.VAT_Amount__c),
+    vat: hideZeroNumber(record?.VAT__c),
+    vat_amount: hideZeroNumber(record?.VAT_Amount__c),
     delivery_date: formatDateDdMmYyyy(record?.Delivery_Date__c),
     booking_reference: clean(record?.Movement__r?.Booking_Reference_No__c),
     w_t_no: clean(record?.Movement__r?.W_T_No__c),
@@ -243,12 +249,19 @@ async function resolveInvoiceContext(payload, env) {
   const visibleCommodityRows = visibleTemplateRows.filter(
     (row) => String(row.pi_line_type || '').toLowerCase() === 'commodity'
   );
-  const first = visibleTemplateRows[0] || {};
+  const first = visibleCommodityRows[0] || visibleTemplateRows[0] || {};
   const firstCommodity = visibleCommodityRows[0] || {};
   const ignoredPreVatTotal = ignoredTemplateRows.reduce(
     (acc, row) => acc + numericOrZero(row.pre_vat_total),
     0
   );
+  const qualityAdjustmentRows = ignoredTemplateRows.map((row) => ({
+    quality_adjustment_invoice_line_id: clean(row.id),
+    quality_adjustment_description: clean(row.description_invoice || row.line_text),
+    quality_adjustment_unit_price: clean(row.unit_price),
+    quality_adjustment_pre_vat_total: clean(row.pre_vat_total),
+    quality_adjustment_vat_amount: clean(row.vat_amount),
+  }));
   const recalculatedPreVatPurchase = rows.reduce(
     (acc, row) => acc + numericOrZero(row.pre_vat_total),
     0
@@ -263,8 +276,8 @@ async function resolveInvoiceContext(payload, env) {
 
   const columsSingle = first && Object.keys(first).length > 0 ? [first] : [];
   const context = {
-    invoice_line_rows: visibleTemplateRows,
-    invoice_line_rows_count: visibleTemplateRows.length,
+    invoice_line_rows: visibleCommodityRows,
+    invoice_line_rows_count: visibleCommodityRows.length,
     colums: visibleCommodityRows,
     colums_count: visibleCommodityRows.length,
     columns: visibleCommodityRows,
@@ -273,7 +286,7 @@ async function resolveInvoiceContext(payload, env) {
     colums_single_count: columsSingle.length,
     description_invoice: buildDescriptionInvoice(first),
     description: buildDescriptionInvoice(first),
-    quality_adjustment_pre_vat_total: formatSummedNumber(ignoredPreVatTotal),
+    quality_adjustment_rows: qualityAdjustmentRows,
     quality_adjustment_rows_count: ignoredTemplateRows.length,
     'Invoice__c.Pre_VAT_Total_Purchase__c': formatSummedNumber(recalculatedPreVatPurchase),
     'Invoice__c.Tonnage__c': formatSummedNumber(recalculatedTonnage),
