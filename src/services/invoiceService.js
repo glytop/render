@@ -54,6 +54,31 @@ function lineTypeToTagSlug(value) {
     .replace(/^_+|_+$/g, '');
 }
 
+/** 15-char case-insensitive Id for Set lookups (REST may mix 15/18 and casing). */
+function normalizeSalesforceId(value) {
+  const s = clean(value);
+  if (!s) return '';
+  const core = s.length === 18 ? s.slice(0, 15) : s;
+  return core.toLowerCase();
+}
+
+function purchaseInvoiceLineIdFromQaRecord(record) {
+  const raw = record?.Purchase_Invoice_Line_ID__c;
+  if (raw && typeof raw === 'object' && raw.Id) return clean(raw.Id);
+  return clean(raw);
+}
+
+/** Picklist API value may differ from label "Commodity". */
+function isCommodityPiLineType(piLineType) {
+  const s = String(piLineType || '').trim().toLowerCase();
+  if (!s) return false;
+  if (s === 'commodity' || s === 'commodities') return true;
+  const slug = lineTypeToTagSlug(piLineType);
+  if (slug === 'commodity') return true;
+  if (slug.startsWith('commodity_')) return true;
+  return false;
+}
+
 function buildDescriptionInvoice(row) {
   const parts = [
     clean(row.commodity),
@@ -238,37 +263,39 @@ async function resolveInvoiceContext(payload, env) {
     env
   );
   const qaLinkedIds = new Set(
-    qaRecords.map((r) => clean(r?.Purchase_Invoice_Line_ID__c)).filter(Boolean)
+    qaRecords.map((r) => normalizeSalesforceId(purchaseInvoiceLineIdFromQaRecord(r))).filter(Boolean)
   );
   const templateRows = rows.map(enrichInvoiceLineRowForTemplate);
-  const visibleTemplateRows = templateRows.filter((row) => !qaLinkedIds.has(clean(row.id)));
-  const ignoredTemplateRows = templateRows.filter((row) => qaLinkedIds.has(clean(row.id)));
-  const commodityRows = templateRows.filter(
-    (row) => String(row.pi_line_type || '').toLowerCase() === 'commodity'
+  const visibleTemplateRows = templateRows.filter(
+    (row) => !qaLinkedIds.has(normalizeSalesforceId(row.id))
   );
-  const visibleCommodityRows = visibleTemplateRows.filter(
-    (row) => String(row.pi_line_type || '').toLowerCase() === 'commodity'
+  const ignoredTemplateRows = templateRows.filter((row) =>
+    qaLinkedIds.has(normalizeSalesforceId(row.id))
+  );
+  const ignoredCommodityQaRows = ignoredTemplateRows.filter((row) =>
+    isCommodityPiLineType(row.pi_line_type)
+  );
+  const commodityRows = templateRows.filter((row) => isCommodityPiLineType(row.pi_line_type));
+  const visibleCommodityRows = visibleTemplateRows.filter((row) =>
+    isCommodityPiLineType(row.pi_line_type)
   );
   const first = visibleCommodityRows[0] || visibleTemplateRows[0] || {};
   const firstCommodity = visibleCommodityRows[0] || {};
-  const ignoredPreVatTotal = ignoredTemplateRows.reduce(
-    (acc, row) => acc + numericOrZero(row.pre_vat_total),
-    0
-  );
-  const qualityAdjustmentRows = ignoredTemplateRows.map((row) => ({
+  const qualityAdjustmentRows = ignoredCommodityQaRows.map((row) => ({
     quality_adjustment_invoice_line_id: clean(row.id),
     quality_adjustment_description: clean(row.description_invoice || row.line_text),
     quality_adjustment_unit_price: clean(row.unit_price),
     quality_adjustment_pre_vat_total: clean(row.pre_vat_total),
     quality_adjustment_vat_amount: clean(row.vat_amount),
   }));
-  const recalculatedPreVatPurchase = rows.reduce(
+  const recalculatedPreVatPurchase = commodityRows.reduce(
     (acc, row) => acc + numericOrZero(row.pre_vat_total),
     0
   );
-  const ignoredCommodityQty = ignoredTemplateRows
-    .filter((row) => String(row.pi_line_type || '').toLowerCase() === 'commodity')
-    .reduce((acc, row) => acc + numericOrZero(row.quantity), 0);
+  const ignoredCommodityQty = ignoredCommodityQaRows.reduce(
+    (acc, row) => acc + numericOrZero(row.quantity),
+    0
+  );
   const invoiceBaseTonnage = numericOrZero(
     payload?.sourceData?.Invoice__c?.Tonnage__c ?? payload?.sourceData?.Tonnage__c
   );
@@ -287,7 +314,7 @@ async function resolveInvoiceContext(payload, env) {
     description_invoice: buildDescriptionInvoice(first),
     description: buildDescriptionInvoice(first),
     quality_adjustment_rows: qualityAdjustmentRows,
-    quality_adjustment_rows_count: ignoredTemplateRows.length,
+    quality_adjustment_rows_count: ignoredCommodityQaRows.length,
     'Invoice__c.Pre_VAT_Total_Purchase__c': formatSummedNumber(recalculatedPreVatPurchase),
     'Invoice__c.Tonnage__c': formatSummedNumber(recalculatedTonnage),
     'Invoice.Pre_VAT_Total_Purchase__c': formatSummedNumber(recalculatedPreVatPurchase),
@@ -375,7 +402,7 @@ async function resolveInvoiceContext(payload, env) {
     });
   });
 
-  ignoredTemplateRows.forEach((row, idx) => {
+  ignoredCommodityQaRows.forEach((row, idx) => {
     const i = idx + 1;
     context[`quality_adjustment_pre_vat_total_${i}`] = clean(row.pre_vat_total);
     context[`quality_adjustment_invoice_line_id_${i}`] = clean(row.id);

@@ -78,16 +78,20 @@ function resolveFieldsData(payload) {
 function buildContext(data) {
   const context = {};
 
+  Object.assign(context, flattenObject(data));
   for (const key of Object.keys(data)) {
     const value = data[key];
     if (value === null || value === undefined) {
       context[key] = '';
       continue;
     }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      context[key] = value;
+      continue;
+    }
     context[key] = typeof value === 'string' ? sanitizeText(value) : value;
   }
 
-  Object.assign(context, flattenObject(data));
   context.generated_date = formatDate(new Date());
   return context;
 }
